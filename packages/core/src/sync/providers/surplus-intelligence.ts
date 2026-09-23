@@ -54,13 +54,26 @@ const BASE_MODEL_OVERRIDES: Record<string, string> = {
   "nvidia-nemotron-3-super-120b": "nvidia/nemotron-3-super-120b-a12b",
   "nvidia-nemotron-nano-12b-v2": "nvidia/nemotron-nano-12b-v2-vl",
   "gemini-3-5-flash": "google/gemini-3.5-flash",
+  "gemini-3-5-flash-lite": "google/gemini-3.5-flash-lite",
+  "gemini-3-6-flash": "google/gemini-3.6-flash",
   "gemini-3.1-pro": "google/gemini-3.1-pro-preview",
   "glm-4.7-thinking": "zhipuai/glm-4.7",
   "glm-5.1-non-thinking": "zhipuai/glm-5.1",
+  "glm-5-2": "zhipuai/glm-5.2",
   "grok-4.20-beta": "xai/grok-4.20-0309-reasoning",
   "grok-4.20-multi-agent-beta": "xai/grok-4.20-multi-agent-0309",
   "grok-build-0-1": "xai/grok-build-0.1",
   "hy3-free": "tencent/hy3",
+  // Venice's low-latency serving profile of the same model (Venice's own
+  // catalog factors it the same way).
+  "kimi-k3-fast-api": "moonshotai/kimi-k3",
+  // Contributor is Meta's lower-cost pricing tier of the same model.
+  "muse-spark-1.2-contributor": "meta/muse-spark-1.2",
+  "muse-spark-1.3-contributor": "meta/muse-spark-1.3",
+  "nvidia-nemotron-3-5-lightning-30b-a3b": "nvidia/nemotron-3.5-lightning",
+  "fugu-ultra-v2": "sakana/fugu-ultra",
+  "seed-2-1-turbo": "bytedance-seed/seed-2.1-turbo",
+  "xiaomi-mimo-v2-5": "xiaomi/mimo-v2.5",
   // Moonshot has no undated K2 API ID (first-party routes are
   // kimi-k2-0711-preview / kimi-k2-0905-preview); the marketplace route's
   // 256K context matches the 0905 checkpoint.
@@ -115,13 +128,17 @@ const INLINE_ROUTES: Record<
 // route ID so it applies to base_model and inline routes alike.
 const ROUTE_REASONING_OPTIONS: Record<string, NonNullable<SyncedFullModel["reasoning_options"]>> = {
   "e2ee-qwen3-6-35b-a3b-uncensored-p": [],
+  "glm-4.7": [],
+  "glm-5.1-non-thinking": [],
+  "glm-5.1-non-thinking:web": [],
   "grok-4.20-multi-agent-beta": [],
+  "kimi-k2.6": [],
 };
 
 const E2EE_GLM_HEADER = [
   "# Catalog lists no reasoning params for this E2EE route and a live probe",
   "# found no active sellers (2026-08-23); controls mirror the OpenRouter",
-  "# peer's [] until testable.",
+  "# peer until testable.",
   "",
 ].join("\n");
 
@@ -135,26 +152,27 @@ const ROUTE_HEADERS: Record<string, string> = {
     "# tokens across pinned sellers (default route, InferHub,",
     "# OpenRouter/StreamLake), on easy and hard prompts alike, with",
     "# reasoning.enabled=true and enable_thinking=true both ignored (the model",
-    "# deliberates in-band in content). OpenRouter peer likewise authors [].",
+    "# deliberates in-band in content), so the OpenRouter peer's toggle is",
+    "# not honored here.",
     "",
   ].join("\n"),
   "glm-4.7": [
     "# Live probes 2026-08-23: reasoning always returned; reasoning.enabled=false",
     "# and thinking.type=disabled both ignored, including on a provider-pinned",
-    "# first-party Z.ai offer — no caller control, matching the OpenRouter",
-    "# peer's [].",
+    "# first-party Z.ai offer — no caller control, so the OpenRouter peer's",
+    "# toggle is not honored here.",
     "",
   ].join("\n"),
   "glm-5.1-non-thinking": [
     "# Despite the route name, live probes 2026-08-23 returned reasoning",
     "# content on every request (thinking.type=disabled ignored); kept on the",
-    "# glm-5.1 base with no caller control.",
+    "# glm-5.1 base with no caller control despite the peer's toggle.",
     "",
   ].join("\n"),
   "glm-5.1-non-thinking:web": [
     "# Despite the route name, live probes 2026-08-23 of the bare route",
     "# returned reasoning content on every request; kept on the glm-5.1 base",
-    "# with no caller control.",
+    "# with no caller control despite the peer's toggle.",
     "",
   ].join("\n"),
   "grok-4.20-multi-agent-beta": [
@@ -196,6 +214,11 @@ const ROUTE_HEADERS: Record<string, string> = {
 // entry lives under an alias/dated ID with no key back to the canonical, or
 // no relay peer exists and the family control is documented on siblings.
 const AUTHORED_REASONING_OPTIONS: Record<string, NonNullable<SyncedFullModel["reasoning_options"]>> = {
+  // No OpenRouter peer; the lab's first-party API (Volcengine, dated ID
+  // doubao-seed-2-1-turbo-260628) documents this effort list.
+  "bytedance-seed/seed-2.1-turbo": [
+    { type: "effort", values: ["none", "minimal", "low", "medium", "high", "xhigh", "max"] },
+  ],
   // OpenRouter's deepseek-chat-v3.1 (same model, alias ID) authors a toggle.
   "deepseek/deepseek-v3.1": [{ type: "toggle" }],
   // No relay peer serves E2B; every other Gemma 4 entry (lab + relays)
@@ -349,6 +372,9 @@ export function buildSurplusModel(model: SurplusModel, existing: ExistingModel |
   const output = modalities(model.architecture.output_modalities, ["text"]);
   const canonical = existing?.base_model ?? resolveSurplusBaseModel(model);
   const route = INLINE_ROUTES[model.id];
+  // Some catalog names carry an OpenRouter-style lab prefix
+  // ("Meta: Muse Spark 1.1"); the lab is already the model's identity.
+  const name = model.name.replace(/^[^:]+: /, "");
   // Surplus's catalog is unreliable about reasoning in both directions: it
   // omits the feature on some lab reasoners (gpt-oss routes advertise it on
   // the e2ee variants only) and blanket-lists reasoning params on lab
@@ -387,7 +413,7 @@ export function buildSurplusModel(model: SurplusModel, existing: ExistingModel |
     return factorBaseModel(
       canonical,
       {
-        name: model.name,
+        name,
         attachment,
         reasoning,
         reasoning_options: reasoningOptions,
@@ -405,14 +431,14 @@ export function buildSurplusModel(model: SurplusModel, existing: ExistingModel |
   }
 
   const releaseDate = dateFromTimestamp(model.created);
-  const family = route?.family ?? inferFamily(model.id, model.name);
+  const family = route?.family ?? inferFamily(model.id, name);
   return {
-    name: model.name,
+    name,
     description: route?.description ??
       existing?.description ??
       describeModel({
         id: model.id,
-        name: model.name,
+        name,
         family,
         reasoning,
         tool_call: toolCall,

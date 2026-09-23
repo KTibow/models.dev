@@ -61,35 +61,48 @@ test("finds first-party reasoning controls in NVIDIA's nested provider layout", 
   expect(firstPartyReasoningOptions("nvidia/nemotron-3-nano-30b-a3b")).toEqual([{ type: "toggle" }]);
 });
 
-test("a peer's affirmative [] wins when the host advertises no reasoning control", () => {
-  // OpenRouter authors reasoning_options = [] for these models and Surplus's
-  // own catalog lists no reasoning params for the routes, so "no caller
-  // control" is the agreed answer even though the lab entries carry toggles.
+test("mirrors the same-surface peer's controls, including an affirmative []", () => {
+  // OpenRouter authors a thinking toggle for these models and an explicit
+  // reasoning_options = [] (no caller control) for the second group; both are
+  // copied as-is rather than falling through to lab controls.
   for (const [id, provider] of [
     ["nvidia-nemotron-3-nano-30b-a3b", "NVIDIA"],
-    ["nvidia-nemotron-nano-9b-v2", "NVIDIA"],
     ["minimax-m3", "MiniMax"],
+  ] as const) {
+    const built = buildSurplusModel(surplusModel({ id, provider }), undefined);
+    expect(built.reasoning_options).toEqual([{ type: "toggle" }]);
+  }
+  for (const [id, provider] of [
+    ["minimax-m2.7", "MiniMax"],
+    ["kimi-k2-thinking", "Moonshot"],
   ] as const) {
     const built = buildSurplusModel(surplusModel({ id, provider }), undefined);
     expect(built.reasoning_options).toEqual([]);
   }
 });
 
-test("a peer's affirmative [] wins even when the host advertises reasoning params", () => {
-  // Live probes (2026-08-23) showed routes that advertise reasoning params
-  // still ignore both OpenRouter-style and lab-native controls (kimi-k2.6
-  // returned no reasoning at all; glm-4.7 ignored both off-switches), so the
-  // OpenRouter peer's [] is authoritative despite the advertised params.
-  const built = buildSurplusModel(
-    surplusModel({
-      id: "kimi-k2.6",
-      provider: "Moonshot",
-      supported_parameters: ["temperature", "reasoning", "include_reasoning"],
-      supported_features: ["streaming", "reasoning", "tools"],
-    }),
-    undefined,
-  );
-  expect(built.reasoning_options).toEqual([]);
+test("live-probed routes keep no caller control despite peer toggles", () => {
+  // Live probes (2026-08-23) showed these routes ignoring both
+  // OpenRouter-style and lab-native controls (kimi-k2.6 returned no
+  // reasoning at all; glm-4.7 and the "non-thinking" GLM 5.1 route ignored
+  // both off-switches), so the tested [] wins over the OpenRouter toggle and
+  // over the reasoning params the catalog advertises.
+  for (const [id, provider] of [
+    ["kimi-k2.6", "Moonshot"],
+    ["glm-4.7", "Zhipu AI"],
+    ["glm-5.1-non-thinking", "Zhipu AI"],
+  ] as const) {
+    const built = buildSurplusModel(
+      surplusModel({
+        id,
+        provider,
+        supported_parameters: ["temperature", "reasoning", "include_reasoning"],
+        supported_features: ["streaming", "reasoning", "tools"],
+      }),
+      undefined,
+    );
+    expect(built.reasoning_options).toEqual([]);
+  }
 });
 
 test("live-probed inline route overrides win over catalog signals", () => {
@@ -130,8 +143,8 @@ test("lab identity decides reasoning for canonical models", () => {
 });
 
 test("marketplace finetunes inherit the parent route's reasoning controls", () => {
-  // The parent canonical zhipuai/glm-4.7-flash's OpenRouter peer authors []
-  // (no caller control), so the heretic finetune inherits exactly that.
+  // The parent canonical zhipuai/glm-4.7-flash's OpenRouter peer authors a
+  // thinking toggle, so the heretic finetune inherits exactly that.
   const built = buildSurplusModel(
     surplusModel({
       id: "glm-4.7-flash-heretic",
@@ -141,5 +154,5 @@ test("marketplace finetunes inherit the parent route's reasoning controls", () =
     }),
     undefined,
   );
-  expect(built.reasoning_options).toEqual([]);
+  expect(built.reasoning_options).toEqual([{ type: "toggle" }]);
 });

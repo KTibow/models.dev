@@ -1,7 +1,7 @@
 # Live probes 2026-08-23: reasoning always returned; reasoning.enabled=false
 # and thinking.type=disabled both ignored, including on a provider-pinned
-# first-party Z.ai offer — no caller control, matching the OpenRouter
-# peer's [].
+# first-party Z.ai offer — no caller control, so the OpenRouter peer's
+# toggle is not honored here.
 base_model = "zhipuai/glm-4.7"
 name = "GLM 4.7"
 structured_output = true

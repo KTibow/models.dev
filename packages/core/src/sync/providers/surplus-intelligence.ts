@@ -219,6 +219,13 @@ const AUTHORED_REASONING_OPTIONS: Record<string, NonNullable<SyncedFullModel["re
   "bytedance-seed/seed-2.1-turbo": [
     { type: "effort", values: ["none", "minimal", "low", "medium", "high", "xhigh", "max"] },
   ],
+  // No relay peer or first-party file under these IDs. xAI documents Grok 4
+  // as always-on reasoning with no effort control, and now serves
+  // grok-code-fast-1 as an alias of grok-build-0.1
+  // (https://docs.x.ai/docs/models/grok-code-fast-1), whose xAI and
+  // OpenRouter entries both author [].
+  "xai/grok-4": [],
+  "xai/grok-code-fast-1": [],
   // OpenRouter's deepseek-chat-v3.1 (same model, alias ID) authors a toggle.
   "deepseek/deepseek-v3.1": [{ type: "toggle" }],
   // No relay peer serves E2B; every other Gemma 4 entry (lab + relays)
@@ -358,6 +365,8 @@ export const surplusIntelligence = {
 // Surplus forwards request parameters to the winning seller unchanged, so
 // reasoning controls use the OpenRouter-style surface advertised in
 // supported_parameters and mirror the canonical model's peer entry.
+const GENERIC_PARAMS = ["max_tokens", "temperature", "top_p", "stop"];
+
 const TOGGLE_HEADER = [
   "# Toggle: reasoning.enabled true|false (OpenRouter-style `reasoning` object,",
   "# forwarded to the seller unchanged); effort: reasoning_effort.",
@@ -389,24 +398,38 @@ export function buildSurplusModel(model: SurplusModel, existing: ExistingModel |
         params.has("reasoning") ||
         params.has("include_reasoning") ||
         params.has("reasoning_effort"));
-  const toolCall = features.has("tools") || params.has("tools") || params.has("tool_choice");
-  const structuredOutput = params.has("structured_outputs");
+  // Routes the catalog knows little about carry exactly GENERIC_PARAMS, even
+  // where features say otherwise (openai-gpt-oss-120b lists `tools` as a
+  // feature only). That list is a placeholder, not evidence the seller lacks
+  // tools or structured outputs, so factored routes inherit the lab there.
+  // Separately, a relay cannot add a sampling control the lab model rejects,
+  // so a lab `temperature = false` is never overridden.
+  const lab = canonical !== undefined ? labMetadata(canonical) : undefined;
+  const uninformative = lab !== undefined &&
+    params.size === GENERIC_PARAMS.length &&
+    GENERIC_PARAMS.every((param) => params.has(param));
+  const toolCall = features.has("tools") || params.has("tools") || params.has("tool_choice") ||
+    (uninformative && lab?.tool_call === true);
+  const structuredOutput = uninformative
+    ? lab?.structured_output
+    : params.has("structured_outputs");
   const attachment = input.some((value) => value !== "text");
-  const temperature = params.has("temperature");
+  const temperature = lab?.temperature !== false && params.has("temperature");
   const contextLength = model.context_length;
   const limit = {
     context: contextLength,
     input: existing?.limit?.input,
     output: model.top_provider?.max_completion_tokens ?? existing?.limit?.output ?? contextLength,
   };
-  // A non-empty hand-authored local value wins; an empty or missing one is
-  // treated as unresolved so peer/lab mirroring can improve it on re-sync
-  // (an authored `[]` must not permanently shadow later-found controls).
-  const authoredOptions = existing?.reasoning_options?.length ? existing.reasoning_options : undefined;
+  // Mirrored controls are recomputed on every sync so a peer's later fix
+  // propagates instead of a stale copy sticking; deliberate exceptions live
+  // in the module maps. A non-empty local value survives only when no source
+  // resolves at all, and an empty one never shadows later-found controls.
+  const localOptions = existing?.reasoning_options?.length ? existing.reasoning_options : undefined;
   const reasoningOptions = reasoning
     ? ROUTE_REASONING_OPTIONS[model.id] ??
-      authoredOptions ??
-      (canonical !== undefined ? mirroredReasoningOptions(canonical) : inlineParentReasoningOptions(model))
+      (canonical !== undefined ? mirroredReasoningOptions(canonical) : inlineParentReasoningOptions(model)) ??
+      localOptions
     : undefined;
 
   if (canonical !== undefined) {
@@ -481,10 +504,14 @@ export function resolveSurplusBaseModel(model: SurplusModel) {
 }
 
 function labReasoning(canonical: string) {
+  return labMetadata(canonical)?.reasoning === true;
+}
+
+function labMetadata(canonical: string) {
   try {
-    return modelMetadata(canonical).reasoning === true;
+    return modelMetadata(canonical);
   } catch {
-    return false;
+    return undefined;
   }
 }
 

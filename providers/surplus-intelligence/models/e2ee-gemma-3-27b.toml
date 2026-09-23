@@ -1,6 +1,7 @@
 base_model = "google/gemma-3-27b-it"
 name = "Gemma 3 27B E2EE"
 attachment = false
+structured_output = true
 
 [limit]
 context = 40_000

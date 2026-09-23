@@ -2,7 +2,8 @@
 # tokens across pinned sellers (default route, InferHub,
 # OpenRouter/StreamLake), on easy and hard prompts alike, with
 # reasoning.enabled=true and enable_thinking=true both ignored (the model
-# deliberates in-band in content). OpenRouter peer likewise authors [].
+# deliberates in-band in content), so the OpenRouter peer's toggle is
+# not honored here.
 base_model = "moonshotai/kimi-k2.6"
 reasoning_options = []
 

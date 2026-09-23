@@ -1,7 +1,7 @@
-# Live probes 2026-08-23: no reasoning content on easy or hard prompts,
-# even with reasoning.enabled=true; the catalog also lists no reasoning
-# feature or params for this route, unlike its reasoning-capable e2ee
-# siblings.
+# Live probes 2026-09-23 (seller: venice): no reasoning content or
+# reasoning tokens even with reasoning.enabled=true (req
+# 01M386XFM84S3Q569B5YESWC73, 01M386XFKV0FKWN3GJD4C9DGSY); the catalog
+# also lists no reasoning feature or params for this route.
 name = "Gemma 4 26B A4B Uncensored (E2EE)"
 description = "Open Gemma instruction model for efficient chat and self-hosted deployments"
 family = "gemma"

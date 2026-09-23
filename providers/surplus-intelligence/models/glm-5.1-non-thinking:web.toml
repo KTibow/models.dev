@@ -1,9 +1,11 @@
-# Despite the route name, live probes 2026-08-23 of the bare route
-# returned reasoning content on every request; kept on the glm-5.1 base
-# with no caller control despite the peer's toggle.
+# Toggle: reasoning.enabled true|false (OpenRouter-style `reasoning` object,
+# forwarded to the seller unchanged); effort: reasoning_effort.
+# Controls mirror the canonical model's lab + same-surface relay peers.
 base_model = "zhipuai/glm-5.1"
 name = "GLM 5.1 Non-thinking (Morpheus Web)"
-reasoning_options = []
+
+[[reasoning_options]]
+type = "toggle"
 
 [limit]
 output = 24_000

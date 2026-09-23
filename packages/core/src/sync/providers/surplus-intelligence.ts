@@ -5,6 +5,7 @@ import { z } from "zod";
 import { describeModel } from "../../describe.js";
 import { inferKimiFamily, ModelFamilyValues } from "../../family.js";
 import type { ExistingModel, SyncProvider, SyncedFullModel, SyncedModel } from "../index.js";
+import { MissingReasoningOptionsError } from "../missing-reasoning-options.js";
 import { factorBaseModel, modelMetadata, resolveCanonicalBaseModel, resolveModelMetadataBaseModel } from "./openrouter.js";
 
 const API_ENDPOINT = "https://api.surplusintelligence.ai/v1/models";
@@ -129,9 +130,8 @@ const INLINE_ROUTES: Record<
 const ROUTE_REASONING_OPTIONS: Record<string, NonNullable<SyncedFullModel["reasoning_options"]>> = {
   "e2ee-qwen3-6-35b-a3b-uncensored-p": [],
   "glm-4.7": [],
+  "glm-5.1": [],
   "glm-5.1-non-thinking": [],
-  "glm-5.1-non-thinking:web": [],
-  "grok-4.20-multi-agent-beta": [],
   "kimi-k2.6": [],
 };
 
@@ -142,59 +142,58 @@ const E2EE_GLM_HEADER = [
   "",
 ].join("\n");
 
-// Evidence headers from live probes against the marketplace (2026-08-23,
-// one short prompt per request, both OpenRouter-style and lab-native wire
-// formats). These document why specific routes diverge from what a peer or
-// the route name would suggest.
+// Evidence headers from live probes against the marketplace. The
+// 2026-09-23 round sent one bat-and-ball + letter-count prompt per request
+// (max_tokens 4000, two runs per variant) with reasoning.enabled true vs
+// false, recording the serving seller (x-si-provider-family) and request ID
+// (x-request-id); "reasoning" means a non-empty message.reasoning or nonzero
+// completion_tokens_details.reasoning_tokens. Only routes whose off-switch
+// was ignored are pinned; routes where it worked mirror their peers.
 const ROUTE_HEADERS: Record<string, string> = {
   "kimi-k2.6": [
-    "# Live probes 2026-08-23: no reasoning side-channel and ~zero reasoning",
-    "# tokens across pinned sellers (default route, InferHub,",
-    "# OpenRouter/StreamLake), on easy and hard prompts alike, with",
-    "# reasoning.enabled=true and enable_thinking=true both ignored (the model",
-    "# deliberates in-band in content), so the OpenRouter peer's toggle is",
-    "# not honored here.",
+    "# Live probes 2026-09-23 (seller: fireworks): reasoning.enabled=false",
+    "# still returned 1,106 and 4,000 reasoning tokens (req",
+    "# 01M386R5PSDNQ7YN997P1S6TP9, 01M386R5Q86H1VNHPF3RWKQ1NV) vs 1,976 and",
+    "# 1,569 with it enabled, so the peer's toggle is not honored here. The",
+    "# :web route (seller: morpheus) does honor it.",
     "",
   ].join("\n"),
   "glm-4.7": [
-    "# Live probes 2026-08-23: reasoning always returned; reasoning.enabled=false",
-    "# and thinking.type=disabled both ignored, including on a provider-pinned",
-    "# first-party Z.ai offer — no caller control, so the OpenRouter peer's",
+    "# Live probes 2026-09-23 (seller: bedrock): no reasoning content or",
+    "# reasoning tokens with reasoning.enabled=true (req",
+    "# 01M386RNF0P4NBJ1DDMEQMV29H, 01M386RNWR8WWWW4S2PD64Y3XZ) or false; 4-5",
+    "# completion tokens either way, so the peer's toggle has no effect here.",
+    "# The :web route (seller: morpheus) does honor it.",
+    "",
+  ].join("\n"),
+  "glm-5.1": [
+    "# Live probes 2026-09-23 (seller: zai): reasoning.enabled=false still",
+    "# returned 143 and 218 reasoning tokens (req 01M386S5CW8SEX8WKKJV9HEFWC,",
+    "# 01M386S56ABT1BM91VRB0F75R3) vs 243 and 195 enabled, so the peer's",
     "# toggle is not honored here.",
     "",
   ].join("\n"),
   "glm-5.1-non-thinking": [
-    "# Despite the route name, live probes 2026-08-23 returned reasoning",
-    "# content on every request (thinking.type=disabled ignored); kept on the",
-    "# glm-5.1 base with no caller control despite the peer's toggle.",
-    "",
-  ].join("\n"),
-  "glm-5.1-non-thinking:web": [
-    "# Despite the route name, live probes 2026-08-23 of the bare route",
-    "# returned reasoning content on every request; kept on the glm-5.1 base",
-    "# with no caller control despite the peer's toggle.",
-    "",
-  ].join("\n"),
-  "grok-4.20-multi-agent-beta": [
-    "# Live probes 2026-08-23: the default seller exposed ~7k chars of",
-    "# reasoning identically at reasoning.effort=low, xhigh, and",
-    "# reasoning_effort=low; an OpenRouter-pinned (xAI-served) seller exposed",
-    "# none at any effort. Effort is not honored either way, so no caller",
-    "# control is cataloged despite the OpenRouter peer's effort list.",
+    "# Despite the route name, live probes 2026-09-23 (seller: morpheus)",
+    "# returned reasoning on every request, including reasoning.enabled=false",
+    "# (1,734 and 2,343 reasoning chars; req 01M386SA2BG4BWGAPNN2HS681J,",
+    "# 01M386SA5YP08ZAC2K7XCEQCNF); kept on the glm-5.1 base with no caller",
+    "# control. The :web route does honor the toggle.",
     "",
   ].join("\n"),
   "e2ee-qwen3-6-35b-a3b-uncensored-p": [
     "# Live probes 2026-08-23: reasoning content returned on every request",
     "# across two pinned providers (Venice AI, Mordiem);",
     "# reasoning.enabled=false and enable_thinking=false both ignored —",
-    "# always-on with no caller control.",
+    "# always-on with no caller control. Not re-testable 2026-09-23: the",
+    "# route is listed but rejected as unavailable (no sellers).",
     "",
   ].join("\n"),
   "e2ee-gemma-4-26b-a4b-uncensored-p": [
-    "# Live probes 2026-08-23: no reasoning content on easy or hard prompts,",
-    "# even with reasoning.enabled=true; the catalog also lists no reasoning",
-    "# feature or params for this route, unlike its reasoning-capable e2ee",
-    "# siblings.",
+    "# Live probes 2026-09-23 (seller: venice): no reasoning content or",
+    "# reasoning tokens even with reasoning.enabled=true (req",
+    "# 01M386XFM84S3Q569B5YESWC73, 01M386XFKV0FKWN3GJD4C9DGSY); the catalog",
+    "# also lists no reasoning feature or params for this route.",
     "",
   ].join("\n"),
   "mistral-large": [
@@ -226,6 +225,9 @@ const AUTHORED_REASONING_OPTIONS: Record<string, NonNullable<SyncedFullModel["re
   // OpenRouter entries both author [].
   "xai/grok-4": [],
   "xai/grok-code-fast-1": [],
+  // Mistral's own magistral-small alias (currently the 2509 checkpoint) and
+  // Bedrock's dated route both author [].
+  "mistral/magistral-small-2509": [],
   // OpenRouter's deepseek-chat-v3.1 (same model, alias ID) authors a toggle.
   "deepseek/deepseek-v3.1": [{ type: "toggle" }],
   // No relay peer serves E2B; every other Gemma 4 entry (lab + relays)
@@ -431,6 +433,15 @@ export function buildSurplusModel(model: SurplusModel, existing: ExistingModel |
       (canonical !== undefined ? mirroredReasoningOptions(canonical) : inlineParentReasoningOptions(model)) ??
       localOptions
     : undefined;
+  // `[]` means "no caller control", so it is never a default: a reasoner
+  // with no sourced controls fails for manual research instead (the runner
+  // keeps any local file and routes the ID to the missing-model issue flow).
+  if (reasoning && reasoningOptions === undefined) {
+    throw new MissingReasoningOptionsError(
+      model.id,
+      "reasoner has no pinned, peer, first-party, or local reasoning_options; research Surplus's control surface before listing",
+    );
+  }
 
   if (canonical !== undefined) {
     return factorBaseModel(

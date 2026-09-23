@@ -82,14 +82,13 @@ test("mirrors the same-surface peer's controls, including an affirmative []", ()
 });
 
 test("live-probed routes keep no caller control despite peer toggles", () => {
-  // Live probes (2026-08-23) showed these routes ignoring both
-  // OpenRouter-style and lab-native controls (kimi-k2.6 returned no
-  // reasoning at all; glm-4.7 and the "non-thinking" GLM 5.1 route ignored
-  // both off-switches), so the tested [] wins over the OpenRouter toggle and
-  // over the reasoning params the catalog advertises.
+  // Live probes (2026-09-23) showed these routes' sellers ignoring
+  // reasoning.enabled=false (or never reasoning at all), so the tested []
+  // wins over the OpenRouter toggle and the catalog's advertised params.
   for (const [id, provider] of [
     ["kimi-k2.6", "Moonshot"],
     ["glm-4.7", "Zhipu AI"],
+    ["glm-5.1", "Zhipu AI"],
     ["glm-5.1-non-thinking", "Zhipu AI"],
   ] as const) {
     const built = buildSurplusModel(
@@ -190,5 +189,12 @@ test("a stale mirrored copy is replaced by the peer's current controls", () => {
       reasoning_options: [{ type: "toggle" }, { type: "budget_tokens", min: 1_024, max: 63_999 }],
     },
   );
+  expect(built.reasoning_options).toEqual([{ type: "toggle" }]);
+});
+
+test("routes whose off-switch was honored in probes mirror the peer", () => {
+  // The :web routes (seller: morpheus) returned zero reasoning with
+  // reasoning.enabled=false, so they keep the OpenRouter toggle.
+  const built = buildSurplusModel(surplusModel({ id: "glm-5.1-non-thinking:web", provider: "Zhipu AI" }), undefined);
   expect(built.reasoning_options).toEqual([{ type: "toggle" }]);
 });

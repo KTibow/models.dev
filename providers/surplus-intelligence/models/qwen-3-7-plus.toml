@@ -9,11 +9,6 @@ structured_output = true
 [[reasoning_options]]
 type = "toggle"
 
-[[reasoning_options]]
-type = "budget_tokens"
-min = 1
-max = 262_144
-
 [limit]
 context = 256_000
 output = 32_768

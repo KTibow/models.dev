@@ -156,3 +156,39 @@ test("marketplace finetunes inherit the parent route's reasoning controls", () =
   );
   expect(built.reasoning_options).toEqual([{ type: "toggle" }]);
 });
+
+test("a placeholder parameter list does not strip lab capabilities", () => {
+  // The catalog gives routes it knows little about exactly
+  // max_tokens/temperature/top_p/stop; that is not evidence the seller
+  // lacks tools or structured outputs.
+  const built = buildSurplusModel(
+    surplusModel({ id: "e2ee-gpt-oss-120b-p", provider: "OpenAI", supported_features: ["streaming", "reasoning"] }),
+    undefined,
+  );
+  expect(built.tool_call).toBeUndefined();
+  expect(built.structured_output).toBeUndefined();
+});
+
+test("a relay never adds temperature support the lab model lacks", () => {
+  const built = buildSurplusModel(
+    surplusModel({
+      id: "claude-sonnet-5",
+      provider: "Anthropic",
+      supported_parameters: ["max_tokens", "temperature", "tools", "structured_outputs", "reasoning"],
+      supported_features: ["streaming", "tools", "reasoning"],
+    }),
+    undefined,
+  );
+  expect(built.temperature).toBeUndefined();
+});
+
+test("a stale mirrored copy is replaced by the peer's current controls", () => {
+  const built = buildSurplusModel(
+    surplusModel({ id: "claude-opus-4.5", provider: "Anthropic" }),
+    {
+      base_model: "anthropic/claude-opus-4-5",
+      reasoning_options: [{ type: "toggle" }, { type: "budget_tokens", min: 1_024, max: 63_999 }],
+    },
+  );
+  expect(built.reasoning_options).toEqual([{ type: "toggle" }]);
+});

@@ -1,5 +1,4 @@
 base_model = "anthropic/claude-fable-5"
-temperature = true
 structured_output = true
 
 [[reasoning_options]]

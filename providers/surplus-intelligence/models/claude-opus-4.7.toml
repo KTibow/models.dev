@@ -3,7 +3,6 @@
 # Controls mirror the canonical model's lab + same-surface relay peers.
 base_model = "anthropic/claude-opus-4-7"
 attachment = false
-temperature = true
 structured_output = true
 
 [[reasoning_options]]

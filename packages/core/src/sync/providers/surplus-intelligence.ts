@@ -9,8 +9,12 @@ import { MissingReasoningOptionsError } from "../missing-reasoning-options.js";
 import { factorBaseModel, modelMetadata, resolveCanonicalBaseModel, resolveModelMetadataBaseModel } from "./openrouter.js";
 
 const API_ENDPOINT = "https://api.surplusintelligence.ai/v1/models";
+// The catalog lists 200+ chat models; far fewer means a truncated or
+// filtered-out response, and syncing it would delete the missing routes.
+const MIN_LIVE_MODELS = 100;
 const PROVIDERS_DIR = path.join(import.meta.dirname, "..", "..", "..", "..", "..", "providers");
 const OPENROUTER_MODELS_DIR = path.join(PROVIDERS_DIR, "openrouter", "models");
+const SURPLUS_MODELS_DIR = path.join(PROVIDERS_DIR, "surplus-intelligence", "models");
 
 // Surplus's `provider` field names the lab that built the model. Mapped to
 // OpenRouter-shaped prefixes so resolveCanonicalBaseModel's candidate rules
@@ -89,34 +93,40 @@ const BASE_MODEL_OVERRIDES: Record<string, string> = {
 // not a fallback: only IDs listed here are written inline, and a new
 // unresolved ID is skipped with a notice instead (see skippedNotice).
 // Fields carry per-route judgment the API cannot provide: public weights,
-// and real ship dates where documented elsewhere in this repo (Venice house
-// models from providers/venice/models) — Surplus reports a placeholder
-// `created` timestamp (2025-01-01) for these routes, which remains the
-// fallback where no documented date exists.
+// and a sourced ship date. Surplus reports a placeholder `created`
+// (2025-01-01) for every one of these routes, so a route without a sourced
+// date stays off the list (e2ee-qwen3-6-35b-a3b-uncensored-p: none of the
+// many Qwen 3.6 35B uncensored checkpoints is identifiable as its source).
 const INLINE_ROUTES: Record<
   string,
   {
     open_weights?: boolean;
-    release_date?: string;
+    release_date: string;
     family?: string;
     description?: string;
-    reasoning?: boolean;
   }
 > = {
-  "e2ee-gemma-4-26b-a4b-uncensored-p": {},
-  // Live probe 2026-08-23: reasons on every request; both off-switches
-  // ignored (see ROUTE_HEADERS).
-  "e2ee-qwen3-6-35b-a3b-uncensored-p": { reasoning: true },
-  "e2ee-venice-uncensored-24b-p": { open_weights: true },
+  // Venice serves it from coder3101/gemma-4-26B-A4B-it-heretic, created
+  // 2026-04-02 (https://huggingface.co/api/models/coder3101/gemma-4-26B-A4B-it-heretic).
+  "e2ee-gemma-4-26b-a4b-uncensored-p": { release_date: "2026-04-02" },
+  // Surplus names it "Venice Uncensored 1.1", like venice-uncensored below.
+  "e2ee-venice-uncensored-24b-p": { open_weights: true, release_date: "2025-07-03" },
   "gemma-4-uncensored": { open_weights: true, release_date: "2026-04-13" },
-  "glm-4.7-flash-heretic": { open_weights: true },
+  "glm-4.7-flash-heretic": { open_weights: true, release_date: "2026-02-04" },
+  // Venice launched the "Venice Medium" tier on 2025-04-28
+  // (https://venice.ai/blog/venice-new-model-paradigm).
   "mistral-large": {
     open_weights: true,
+    release_date: "2025-04-28",
     family: "venice",
     description: "Venice-branded Mistral-family chat model for general assistant workloads",
   },
-  "qwen3.6-plus-uncensored": {},
-  "venice-uncensored": { open_weights: true },
+  // Venice's model list carries qwen-3-6-plus ("Qwen 3.6 Plus Uncensored")
+  // as created 2026-04-06 (https://api.venice.ai/api/v1/models?type=all).
+  "qwen3.6-plus-uncensored": { release_date: "2026-04-06" },
+  // Venice Uncensored 1.1 shipped 2025-07-03
+  // (https://venice.ai/blog/introducing-dolphin-mistral-24b-venice-edition-the-most-uncensored-ai-model-yet).
+  "venice-uncensored": { open_weights: true, release_date: "2025-07-03" },
   "venice-uncensored-1.2": { open_weights: true, release_date: "2026-04-01" },
   "venice-uncensored-role-play": { open_weights: true, release_date: "2026-02-20" },
 };
@@ -128,7 +138,6 @@ const INLINE_ROUTES: Record<
 // result wins for that route (see ROUTE_HEADERS for the evidence). Keyed by
 // route ID so it applies to base_model and inline routes alike.
 const ROUTE_REASONING_OPTIONS: Record<string, NonNullable<SyncedFullModel["reasoning_options"]>> = {
-  "e2ee-qwen3-6-35b-a3b-uncensored-p": [],
   "glm-4.7": [],
   "glm-5.1": [],
   "glm-5.1-non-thinking": [],
@@ -179,14 +188,6 @@ const ROUTE_HEADERS: Record<string, string> = {
     "# (1,734 and 2,343 reasoning chars; req 01M386SA2BG4BWGAPNN2HS681J,",
     "# 01M386SA5YP08ZAC2K7XCEQCNF); kept on the glm-5.1 base with no caller",
     "# control. The :web route does honor the toggle.",
-    "",
-  ].join("\n"),
-  "e2ee-qwen3-6-35b-a3b-uncensored-p": [
-    "# Live probes 2026-08-23: reasoning content returned on every request",
-    "# across two pinned providers (Venice AI, Mordiem);",
-    "# reasoning.enabled=false and enable_thinking=false both ignored —",
-    "# always-on with no caller control. Not re-testable 2026-09-23: the",
-    "# route is listed but rejected as unavailable (no sellers).",
     "",
   ].join("\n"),
   "e2ee-gemma-4-26b-a4b-uncensored-p": [
@@ -316,6 +317,10 @@ export const surplusIntelligence = {
   id: "surplus-intelligence",
   name: "Surplus Intelligence",
   modelsDir: "providers/surplus-intelligence/models",
+  // The sync owns the toggle wire-path header and must drop it when a
+  // route's toggle goes away; hand-written headers are carried through
+  // translateModel instead (see authoredHeader).
+  authoritativeHeaders: true,
   async fetchModels() {
     const response = await fetch(API_ENDPOINT);
     if (!response.ok) {
@@ -328,9 +333,16 @@ export const surplusIntelligence = {
     // per request or per media unit; those cannot be represented by the
     // token-cost schema and are intentionally out of catalog scope. Text
     // chat models all report a real context window.
-    return SurplusResponse.parse(raw).data.filter(
+    const models = SurplusResponse.parse(raw).data.filter(
       (model) => model.context_length > 0 && model.architecture.output_modalities.includes("text"),
     );
+    if (models.length < MIN_LIVE_MODELS) {
+      throw new Error(
+        `Surplus Intelligence returned ${models.length} chat models, below the ${MIN_LIVE_MODELS} needed to`
+          + ` distinguish a retirement from a truncated response`,
+      );
+    }
+    return models;
   },
   translateModel(model, context) {
     const existing = context.existing(model.id);
@@ -350,7 +362,7 @@ export const surplusIntelligence = {
       header: ROUTE_HEADERS[model.id] ??
         (translated.reasoning_options?.some((option) => option.type === "toggle")
           ? TOGGLE_HEADER
-          : undefined),
+          : authoredHeader(model.id)),
     };
   },
   sourceID(model) {
@@ -391,15 +403,14 @@ export function buildSurplusModel(model: SurplusModel, existing: ExistingModel |
   // the e2ee variants only) and blanket-lists reasoning params on lab
   // non-reasoners (the instruct-2507 checkpoint). A pass-through marketplace
   // can neither strip nor add reasoning, so lab identity is authoritative
-  // for canonical models; Surplus's own signals (or live-probe overrides on
-  // the allowlist entry) apply only to marketplace-only inline routes.
+  // for canonical models; Surplus's own signals apply only to
+  // marketplace-only inline routes.
   const reasoning = canonical !== undefined
     ? labReasoning(canonical)
-    : route?.reasoning ??
-      (features.has("reasoning") ||
-        params.has("reasoning") ||
-        params.has("include_reasoning") ||
-        params.has("reasoning_effort"));
+    : features.has("reasoning") ||
+      params.has("reasoning") ||
+      params.has("include_reasoning") ||
+      params.has("reasoning_effort");
   // Routes the catalog knows little about carry exactly GENERIC_PARAMS, even
   // where features say otherwise (openai-gpt-oss-120b lists `tools` as a
   // feature only). That list is a placeholder, not evidence the seller lacks
@@ -418,10 +429,14 @@ export function buildSurplusModel(model: SurplusModel, existing: ExistingModel |
   const attachment = input.some((value) => value !== "text");
   const temperature = lab?.temperature !== false && params.has("temperature");
   const contextLength = model.context_length;
+  // Without a host cap the lab's output limit is the best bound; the context
+  // window is not one, and earlier syncs wrote it in this field's place.
+  const labLimitOutput = (lab?.limit as { output?: number } | undefined)?.output;
+  const labOutput = labLimitOutput === undefined ? undefined : Math.min(labLimitOutput, contextLength);
   const limit = {
     context: contextLength,
     input: existing?.limit?.input,
-    output: model.top_provider?.max_completion_tokens ?? existing?.limit?.output ?? contextLength,
+    output: model.top_provider?.max_completion_tokens ?? labOutput ?? existing?.limit?.output ?? contextLength,
   };
   // Mirrored controls are recomputed on every sync so a peer's later fix
   // propagates instead of a stale copy sticking; deliberate exceptions live
@@ -482,8 +497,8 @@ export function buildSurplusModel(model: SurplusModel, existing: ExistingModel |
         modalities: { input, output },
       }),
     family,
-    release_date: existing?.release_date ?? route?.release_date ?? releaseDate,
-    last_updated: existing?.last_updated ?? route?.release_date ?? releaseDate,
+    release_date: route?.release_date ?? existing?.release_date ?? releaseDate,
+    last_updated: route?.release_date ?? existing?.last_updated ?? releaseDate,
     attachment,
     reasoning,
     reasoning_options: reasoningOptions,
@@ -500,6 +515,9 @@ export function buildSurplusModel(model: SurplusModel, existing: ExistingModel |
 }
 
 export function resolveSurplusBaseModel(model: SurplusModel) {
+  // Allowlisted inline routes stay inline even when a lab entry later matches
+  // their ID (mistral-large is Venice Medium, not Mistral Large).
+  if (model.id in INLINE_ROUTES) return undefined;
   const routeID = model.id.replace(/:web$/, "");
   const override = BASE_MODEL_OVERRIDES[routeID] ?? BASE_MODEL_OVERRIDES[unwrapE2EE(routeID)];
   if (override !== undefined) return override;
@@ -516,6 +534,23 @@ export function resolveSurplusBaseModel(model: SurplusModel) {
 
 function labReasoning(canonical: string) {
   return labMetadata(canonical)?.reasoning === true;
+}
+
+// A file's leading comment block, unless it is the sync's own toggle header.
+function authoredHeader(id: string) {
+  let text: string;
+  try {
+    text = readFileSync(path.join(SURPLUS_MODELS_DIR, `${id}.toml`), "utf8");
+  } catch {
+    return undefined;
+  }
+  const lines: string[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.startsWith("#") && line.trim() !== "") break;
+    lines.push(line);
+  }
+  const header = lines.join("\n").trim();
+  return header === "" || header === TOGGLE_HEADER.trim() ? undefined : `${header}\n`;
 }
 
 function labMetadata(canonical: string) {

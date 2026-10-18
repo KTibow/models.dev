@@ -4,6 +4,7 @@ import {
   buildSurplusModel,
   firstPartyReasoningOptions,
   resolveSurplusBaseModel,
+  surplusIntelligence,
   SurplusModel,
 } from "../src/sync/providers/surplus-intelligence.js";
 
@@ -51,6 +52,8 @@ test("keeps true filename aliases in the override map", () => {
 test("does not invent canonical metadata for marketplace-only routes", () => {
   expect(resolveSurplusBaseModel(surplusModel({ id: "gemma-4-uncensored", provider: "Google" }))).toBeUndefined();
   expect(resolveSurplusBaseModel(surplusModel({ id: "venice-uncensored-1.2", provider: "Venice AI" }))).toBeUndefined();
+  // Venice Medium; a models/mistral/mistral-large.toml must not claim it.
+  expect(resolveSurplusBaseModel(surplusModel({ id: "mistral-large", provider: "Mistral AI" }))).toBeUndefined();
 });
 
 test("finds first-party reasoning controls in NVIDIA's nested provider layout", () => {
@@ -102,18 +105,6 @@ test("live-probed routes keep no caller control despite peer toggles", () => {
     );
     expect(built.reasoning_options).toEqual([]);
   }
-});
-
-test("live-probed inline route overrides win over catalog signals", () => {
-  // e2ee-qwen3-6-35b-a3b-uncensored-p returned reasoning content on every
-  // probe (both off-switches ignored) although the catalog marks it
-  // non-reasoning; the allowlist entry pins reasoning = true with [].
-  const built = buildSurplusModel(
-    surplusModel({ id: "e2ee-qwen3-6-35b-a3b-uncensored-p", provider: "Alibaba" }),
-    undefined,
-  );
-  expect(built.reasoning).toBe(true);
-  expect(built.reasoning_options).toEqual([]);
 });
 
 test("an authored empty reasoning_options does not shadow peer controls", () => {
@@ -197,4 +188,22 @@ test("routes whose off-switch was honored in probes mirror the peer", () => {
   // reasoning.enabled=false, so they keep the OpenRouter toggle.
   const built = buildSurplusModel(surplusModel({ id: "glm-5.1-non-thinking:web", provider: "Zhipu AI" }), undefined);
   expect(built.reasoning_options).toEqual([{ type: "toggle" }]);
+});
+
+test("without a host cap, output falls back to the lab limit, not the context window", () => {
+  const built = buildSurplusModel(
+    surplusModel({
+      id: "gemma-4-26b-a4b-it",
+      provider: "Google",
+      context_length: 262_144,
+      top_provider: { context_length: 262_144 },
+    }),
+    { base_model: "google/gemma-4-26b-a4b-it", limit: { context: 262_144, output: 262_144 } },
+  );
+  expect(built.limit?.output).toBeUndefined();
+});
+
+test("a truncated catalog fails the run instead of deleting routes", () => {
+  expect(() => surplusIntelligence.parseModels({ data: [] })).toThrow(/truncated/);
+  expect(() => surplusIntelligence.parseModels({ data: [surplusModel({})] })).toThrow(/truncated/);
 });
